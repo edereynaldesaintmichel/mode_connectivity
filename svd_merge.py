@@ -41,31 +41,75 @@ class MNISTNet(nn.Module):
         x = self.relu3(x)
         x = self.fc2(x)
         return x
+    
 
-def compute_svd_of_model_params(model):
+def get_divisors(n):
+    divisors = []
+    for i in range(1, int(n**0.5) + 1):
+        if n % i == 0:
+            divisors.append((i, n // i))
+    return divisors
+
+
+def get_models_diff(model1: MNISTNet, model2: MNISTNet):
+    state_dict1 = model1.state_dict()
+    state_dict2 = model2.state_dict()
+    diff_state_dict = {}
+    diff_model = MNISTNet()
+
+    for key in state_dict1:
+        diff_state_dict[key] = state_dict1[key] - state_dict2[key]
+
+    diff_model.load_state_dict(diff_state_dict)
+
+def compute_svd_of_model_params(model: MNISTNet): 
     svd_params = {}
+    to_flatify = set()
     
     for name, param in model.named_parameters():
         if param.dim() >= 2:  # SVD is applicable to 2D matrices, so check the dimension
             U, S, V = torch.svd(param.data)
             svd_params[name] = (U, S, V)
         else:
-            svd_params[name] = param.data  # Store as is if it's a bias or 1D param
+            # length = param.data.size()[0]
+            # reshaped_param = param.data.view(get_divisors(length)[-1])
+            # U, S, V = torch.svd(reshaped_param)
+            # svd_params[name] = (U, S, V)
+            # to_flatify.add(name)
+
+            svd_params[name] = param.data
     
     return svd_params
 
+
 # Usage
 model = MNISTNet()
+model.load_state_dict(torch.load('model1.pth', map_location=torch.device('cpu')))
 svd_params = compute_svd_of_model_params(model)
 
-print(svd_params)
-
 # Example to access SVD components
-for layer, (U, S, V) in svd_params.items():
-    if isinstance(U, torch.Tensor):  # Check if SVD was computed
+total_tunable_params = 0
+condition_number = 0
+i = 0
+for layer, svd_param in svd_params.items():
+    if (isinstance(svd_param, tuple)):
+        (U, S, V) = svd_param
         print(f"SVD for {layer}:")
-        print("U:", U)
-        print("S:", S)
-        print("V:", V)
+        tunable_params = torch.prod(torch.tensor(S.size()))
+
+        total_tunable_params += tunable_params
+        s_dim = S.dim()
+        max_eigh, trash = S.max(dim=s_dim -1)
+        min_eigh, trash = S.min(dim=s_dim -1)
+        condition_numbers = max_eigh / min_eigh
+        # log_cond = torch.log(condition_numbers)
+        condition_number += torch.mean(condition_numbers)
+        i+=1
     else:
-        print(f"Parameter for {layer} (bias or 1D): {U}")
+        total_tunable_params += svd_param.size()[0]
+
+condition_number = condition_number / i
+
+print(f"Total tunable_params: {total_tunable_params} \n Avg Cond: {condition_number}")
+
+
