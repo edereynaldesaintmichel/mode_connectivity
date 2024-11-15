@@ -4,38 +4,11 @@ import torch.optim as optim
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 from torch.utils.data import DataLoader, random_split
+from mnist_net import MNISTNet
 
 # Load MNIST dataset
 train_data = MNIST(root='./data', train=True, download=True, transform=ToTensor())
 test_data = MNIST(root='./data', train=False, download=True, transform=ToTensor())
-
-# Define the CNN model
-class MNISTNet(nn.Module):
-    def __init__(self):
-        super(MNISTNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
-        self.relu1 = nn.ReLU()
-        self.pool1 = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.relu2 = nn.ReLU()
-        self.pool2 = nn.MaxPool2d(2, 2)
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(64 * 7 * 7, 64)
-        self.relu3 = nn.ReLU()
-        self.fc2 = nn.Linear(64, 10)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.relu1(x)
-        x = self.pool1(x)
-        x = self.conv2(x)
-        x = self.relu2(x)
-        x = self.pool2(x)
-        x = self.flatten(x)
-        x = self.fc1(x)
-        x = self.relu3(x)
-        x = self.fc2(x)
-        return x
 
 # Set initial seed for reproducibility
 torch.manual_seed(4)
@@ -51,29 +24,29 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 total_params = sum(p.numel() for p in model.parameters())
 print(f'Total number of parameters: {total_params}')
 
-# # Create DataLoader for parent model
-# train_loader_parent = DataLoader(train_data, batch_size=32, shuffle=True)
+# Create DataLoader for parent model
+train_loader_parent = DataLoader(train_data, batch_size=32, shuffle=True)
 
-# for epoch in range(1):
-#     running_loss = 0.0
-#     for i, data in enumerate(train_loader_parent, 0):
-#         inputs, labels = data
-#         inputs, labels = inputs.to(device), labels.to(device)
+for epoch in range(1):
+    running_loss = 0.0
+    for i, data in enumerate(train_loader_parent, 0):
+        inputs, labels = data
+        inputs, labels = inputs.to(device), labels.to(device)
 
-#         optimizer.zero_grad()
-#         outputs = model(inputs)
-#         loss = criterion(outputs, labels)
-#         loss.backward()
-#         optimizer.step()
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
 
-#         running_loss += loss.item()
-#         if i % 100 == 99:
-#             print(f'[{epoch + 1}, {i + 1}] loss: {running_loss / 100:.3f}')
-#             running_loss = 0.0
+        running_loss += loss.item()
+        if i % 100 == 99:
+            print(f'[{epoch + 1}, {i + 1}] loss: {running_loss / 100:.3f}')
+            running_loss = 0.0
 
-#         if i % 5 == 4:
-#             break
-# # print('Finished Training Parent Model')
+        if i % 5 == 4:
+            break
+# print('Finished Training Parent Model')
 
 # Save the trained parent model
 torch.save(model.state_dict(), 'parent_model.pth')
@@ -107,7 +80,7 @@ optimizer1 = optim.Adam(model1.parameters(), lr=0.001)
 optimizer2 = optim.Adam(model2.parameters(), lr=0.001)
 
 # Train model1
-for epoch in range(3):
+for epoch in range(10):
     running_loss = 0.0
     for i, data in enumerate(train_loader1, 0):
         inputs, labels = data
@@ -127,7 +100,7 @@ for epoch in range(3):
 print('Finished Training model1')
 
 # Train model2
-for epoch in range(3):
+for epoch in range(10):
     running_loss = 0.0
     for i, data in enumerate(train_loader2, 0):
         inputs, labels = data

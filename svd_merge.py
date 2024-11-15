@@ -5,6 +5,7 @@ from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 from torch.utils.data import DataLoader
 import torch.nn as nn
+from mnist_net import MNISTNet
 
 # Load MNIST test dataset
 test_data = MNIST(root='./data', train=False,
@@ -12,36 +13,33 @@ test_data = MNIST(root='./data', train=False,
 # It's better to set shuffle=False for consistent evaluation
 test_loader = DataLoader(test_data, batch_size=10, shuffle=False)
 
-# Define the CNN model
+class MergePath(nn.Module):
+    def __init__(self, diff_model_state_dict: dict, path_length: int):
+        super(MergePath, self).__init__()
+        self.path_length = path_length
+        self.parameter_keys = list(key.replace('.', '') for key in diff_model_state_dict.keys())
+        self.num_params = len(self.parameter_keys)
 
+        # Initialize coefficients for each step and each parameter
+        # We'll register each coefficient as a separate parameter with unique names
+        for step in range(path_length-2):
+            for key in self.parameter_keys:
+                param_name = f'step{step}_{key}'
+                initial_coeff = step / (path_length - 1) + 0 * torch.rand(1)
+                initial_coeff = torch.clamp(torch.tensor(initial_coeff), 1e-6, 1 - 1e-6)
+                initial_value = torch.log(initial_coeff / (1 - initial_coeff))
+                self.register_parameter(param_name, nn.Parameter(initial_value))
 
-class MNISTNet(nn.Module):
-    def __init__(self):
-        super(MNISTNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
-        self.relu1 = nn.ReLU()
-        self.pool1 = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.relu2 = nn.ReLU()
-        self.pool2 = nn.MaxPool2d(2, 2)
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(64 * 7 * 7, 64)
-        self.relu3 = nn.ReLU()
-        self.fc2 = nn.Linear(64, 10)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.relu1(x)
-        x = self.pool1(x)
-        x = self.conv2(x)
-        x = self.relu2(x)
-        x = self.pool2(x)
-        x = self.flatten(x)
-        x = self.fc1(x)
-        x = self.relu3(x)
-        x = self.fc2(x)
-        return x
-    
+    def forward(self):
+        coeffs_path = []
+        for step in range(path_length-2):
+            coeffs_step = {}
+            for key in self.parameter_keys:
+                param_name = f'step{step}_{key}'
+                coeff = torch.sigmoid(getattr(self, param_name))
+                coeffs_step[key] = coeff
+            coeffs_path.append(coeffs_step)
+        return coeffs_path
 
 def get_divisors(n):
     divisors = []
@@ -51,22 +49,28 @@ def get_divisors(n):
     return divisors
 
 
-def get_models_diff(model1: MNISTNet, model2: MNISTNet):
-    state_dict1 = model1.state_dict()
-    state_dict2 = model2.state_dict()
+def substract_state_dicts(state_dict1: dict, state_dict2: dict):
     diff_state_dict = {}
-    diff_model = MNISTNet()
-
     for key in state_dict1:
         diff_state_dict[key] = state_dict1[key] - state_dict2[key]
 
-    diff_model.load_state_dict(diff_state_dict)
+    return diff_state_dict
 
-def compute_svd_of_model_params(model: MNISTNet): 
+def add_state_dicts(state_dict1: dict, state_dict2: dict):
+    sum_state_dict = {}
+
+    for key in state_dict1:
+        sum_state_dict[key] = state_dict1[key] + state_dict2[key]
+
+    return sum_state_dict
+
+
+
+def compute_svd_of_model_params(state_dict: dict): 
     svd_params = {}
     to_flatify = set()
     
-    for name, param in model.named_parameters():
+    for name, param in state_dict.items():
         if param.dim() >= 2:  # SVD is applicable to 2D matrices, so check the dimension
             U, S, V = torch.svd(param.data)
             svd_params[name] = (U, S, V)
@@ -82,34 +86,90 @@ def compute_svd_of_model_params(model: MNISTNet):
     return svd_params
 
 
+def get_model_state_dict_from_svd(svd_params):
+    new_state_dict = {}
+    for name, svd_param in svd_params.items():
+        if isinstance(svd_param, tuple):
+            U, S, V = svd_param
+            dim_v = V.dim()
+            reconstructed_param = torch.matmul(
+                torch.matmul(U, torch.diag_embed(S)),
+                V.transpose(dim_v-2, dim_v-1)
+            )
+            new_state_dict[name] = reconstructed_param
+        else:
+            new_state_dict[name] = svd_param
+    
+    return new_state_dict
+
+
+def merge_models(model1: MNISTNet, model2: MNISTNet, coeffs: dict):
+    # Create a new model instance
+    merged_model = MNISTNet()
+
+    # Get state dictionaries
+    state_dict1 = model1.state_dict()
+    state_dict2 = model2.state_dict()
+    merged_state_dict = {}
+
+    # Iterate through all parameters and merge
+    for key in state_dict1:
+        coeff_key = key.replace('.', '')
+        merged_state_dict[key] = coeffs[coeff_key] * \
+            state_dict1[key] + (1 - coeffs[coeff_key]) * state_dict2[key]
+
+    # Load the merged state dict into the new model
+    merged_model.load_state_dict(merged_state_dict)
+
+    return merged_model
+
+
+def merge_svd_models(state_dict_model_1: dict, diff_model_svd_params: dict, optimized_diff_model_params: dict):
+    merged_model = MNISTNet()
+    updated_diff_model_svd = {}
+
+    for name, svd_param in diff_model_svd_params.items():
+        if (isinstance(svd_param, tuple)):
+            (U, S, V) = svd_param
+            S = optimized_diff_model_params[name]
+            updated_diff_model_svd[name] = (U, S, V)
+        else:
+            updated_diff_model_svd[name] = optimized_diff_model_params[name]
+    
+    optimized_diff_model_state_dict = get_model_state_dict_from_svd(updated_diff_model_svd)
+    merged_model_state_dict = add_state_dicts(state_dict1=state_dict_model_1, state_dict2=optimized_diff_model_state_dict)
+    merged_model.load_state_dict(merged_model_state_dict)
+
+    return merged_model
+
+
+
+        
+
+
 # Usage
-model = MNISTNet()
-model.load_state_dict(torch.load('model1.pth', map_location=torch.device('cpu')))
-svd_params = compute_svd_of_model_params(model)
+state_dict_1 = torch.load('model1.pth', map_location=torch.device('cpu'))
+state_dict_2 = torch.load('model2.pth', map_location=torch.device('cpu'))
+
+
+diff_state_dict = substract_state_dicts(state_dict_1=state_dict_2, state_dict_2=state_dict_1)
+
+svd_params = compute_svd_of_model_params(state_dict=diff_state_dict)
+
+# test_diff_model = get_model_from_svd(svd_params)
 
 # Example to access SVD components
 total_tunable_params = 0
-condition_number = 0
-i = 0
+
 for layer, svd_param in svd_params.items():
     if (isinstance(svd_param, tuple)):
         (U, S, V) = svd_param
-        print(f"SVD for {layer}:")
         tunable_params = torch.prod(torch.tensor(S.size()))
 
         total_tunable_params += tunable_params
-        s_dim = S.dim()
-        max_eigh, trash = S.max(dim=s_dim -1)
-        min_eigh, trash = S.min(dim=s_dim -1)
-        condition_numbers = max_eigh / min_eigh
-        # log_cond = torch.log(condition_numbers)
-        condition_number += torch.mean(condition_numbers)
-        i+=1
     else:
         total_tunable_params += svd_param.size()[0]
 
-condition_number = condition_number / i
-
-print(f"Total tunable_params: {total_tunable_params} \n Avg Cond: {condition_number}")
+print(f"Total tunable_params: {total_tunable_params}")
 
 

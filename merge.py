@@ -7,7 +7,8 @@ from torch.utils.data import DataLoader
 import numpy as np
 import torch.optim as optim
 import torch.nn as nn
-from collections import Counter
+from mnist_net import MNISTNet
+
 
 # Load MNIST test dataset
 test_data = MNIST(root='./data', train=False,
@@ -16,34 +17,6 @@ test_data = MNIST(root='./data', train=False,
 test_loader = DataLoader(test_data, batch_size=10, shuffle=False)
 
 # Define the CNN model
-
-
-class MNISTNet(nn.Module):
-    def __init__(self):
-        super(MNISTNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
-        self.relu1 = nn.ReLU()
-        self.pool1 = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.relu2 = nn.ReLU()
-        self.pool2 = nn.MaxPool2d(2, 2)
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(64 * 7 * 7, 64)
-        self.relu3 = nn.ReLU()
-        self.fc2 = nn.Linear(64, 10)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.relu1(x)
-        x = self.pool1(x)
-        x = self.conv2(x)
-        x = self.relu2(x)
-        x = self.pool2(x)
-        x = self.flatten(x)
-        x = self.fc1(x)
-        x = self.relu3(x)
-        x = self.fc2(x)
-        return x
 
 # Function to merge two models
 
@@ -157,11 +130,10 @@ class MergePath(nn.Module):
         for step in range(path_length-2):
             for key in self.parameter_keys:
                 param_name = f'step{step}_{key}'
-                initial_coeff = step / (path_length - 1) + 1 * torch.rand(1)
+                initial_coeff = step / (path_length - 1) + 0 * torch.rand(1)
                 initial_coeff = torch.clamp(torch.tensor(initial_coeff), 1e-6, 1 - 1e-6)
-                initial_value = torch.log(initial_coeff / (1 - initial_coeff))
-                self.register_parameter(
-                    param_name, nn.Parameter(initial_value))
+                # initial_value = torch.log(initial_coeff / (1 - initial_coeff))
+                self.register_parameter(param_name, nn.Parameter(initial_coeff))
 
     def forward(self):
         coeffs_path = []
@@ -176,27 +148,26 @@ class MergePath(nn.Module):
 
 
 path_length = 10  # Number of steps in the path
-# merge_path = MergePath(model1, model2, path_length)
-# merge_path.load_state_dict(torch.load('path_finder_4.pth', map_location=torch.device('cpu')))
+merge_path = MergePath(model1, model2, path_length)
 
-# optimizer = optim.Adam(merge_path.parameters(), lr=0.01)
+optimizer = optim.Adam(merge_path.parameters(), lr=0.2)
 
-# num_epochs = 200  # Adjust as needed
+num_epochs = 150  # Adjust as needed
 
 
-# min_theoretical_distance = len(model1.state_dict()) ** 0.5
-# print(f'min_theoretical_distance: {min_theoretical_distance}')
+min_theoretical_distance = len(model1.state_dict()) ** 0.5
+print(f'min_theoretical_distance: {min_theoretical_distance}')
 
-# for epoch in range(num_epochs):
-#     optimizer.zero_grad()
-#     coeffs_path = merge_path()
-#     loss, losses, distances = get_merge_loss(model1, model2, coeffs_path, distance_penalty=0.01, stdev_penalty=0.5)
-#     loss.backward()
-#     optimizer.step()
+for epoch in range(num_epochs):
+    optimizer.zero_grad()
+    coeffs_path = merge_path()
+    loss, losses, distances = get_merge_loss(model1, model2, coeffs_path, distance_penalty=0.01, stdev_penalty=0.5)
+    loss.backward()
+    optimizer.step()
 
-#     print(f'Epoch {epoch+1}/{num_epochs}, Loss: {loss.item()}, Distance: {sum(distances)}, Path Loss: {sum(losses)}')
+    print(f'Epoch {epoch+1}/{num_epochs}, Loss: {loss.item()}, Distance: {sum(distances)}, Path Loss: {sum(losses)}')
 
-# torch.save(merge_path.state_dict(), 'path_finder_4.pth')
+torch.save(merge_path.state_dict(), 'path_finder.pth')
 
 
 
@@ -237,7 +208,7 @@ def evaluate_paths(paths, eval_steps, model1, model2):
             optimal_coeffs = {key: path[index-1][key] + interpolation_coeff * (path[index][key] - path[index-1][key]) for key in path[0]}
 
             optimal_path_model = merge_models(model1=model1, model2=model2, coeffs=optimal_coeffs)
-            optimal_path_losses.append(get_loss(optimal_path_model))
+            optimal_path_losses.append(get_loss(optimal_path_model, 500))
             optimal_path_eval_coeffs.append(optimal_coeffs)
 
         # Store results for this path
@@ -249,7 +220,7 @@ def evaluate_paths(paths, eval_steps, model1, model2):
     path_coeffs['linear'] = linear_path
     for i in range(eval_steps):
         linear_path_model = merge_models(model1=model1, model2=model2, coeffs=linear_path[i])
-        linear_path_losses.append(get_loss(linear_path_model))
+        linear_path_losses.append(get_loss(linear_path_model, 500))
     
     results['linear'] = linear_path_losses
     
@@ -276,10 +247,8 @@ def plot_results(results, path_coeffs, eval_steps):
 
 # Example usage
 paths = {
-    'optimal_path_1': 'path_finder.pth',
-    'optimal_path_2': 'path_finder_2.pth',
-    'optimal_path_3': 'path_finder_3.pth',
-    'optimal_path_4': 'path_finder_4.pth',
+    'path_finder': 'path_finder.pth',
+    # 'path_finder_2': 'path_finder_2.pth',
     # Add more paths here if needed
 }
 
