@@ -63,33 +63,49 @@ losses = []
 
 # Define the loss function
 criterion = nn.CrossEntropyLoss()
-
+num_images_to_display = 10
 # Iterate over each coefficient, merge models, and compute test loss
 for coeff in coefficients:
     print(f"Processing coefficient: {coeff:.2f}")
-    # Merge the models
     merged_model = merge_models(model1, model2, coeff)
     merged_model.eval()
     
     total_loss = 0.0
     total_samples = 0
-    num_images_to_process = 50
-    images_processed = 0
+    num_images_processed = 0
+    images_list, predictions_list, labels_list = [], [], []
+
     with torch.no_grad():
         for images, labels in test_loader:
-            if images_processed >= num_images_to_process:
-                images_processed = 0
-                break
-            images_processed += 1
             outputs = merged_model(images)
             loss = criterion(outputs, labels)
-            # Multiply by number of samples in the batch
             total_loss += loss.item() * images.size(0)
             total_samples += images.size(0)
-    
+            
+            # Collect images and predictions for visualization
+            if num_images_processed < num_images_to_display:
+                _, predictions = torch.max(outputs, dim=1)
+                images_list.extend(images.numpy())
+                predictions_list.extend(predictions.numpy())
+                labels_list.extend(labels.numpy())
+                num_images_processed += len(images)
+                
+            if num_images_processed >= num_images_to_display:
+                break
+
     average_loss = total_loss / total_samples
     losses.append(average_loss)
     print(f"Average Test Loss for coeff {coeff:.2f}: {average_loss:.4f}")
+    
+    # Display images, predictions, and ground truths
+    # plt.figure(figsize=(12, 6))
+    # for i in range(num_images_to_display):
+    #     plt.subplot(2, 5, i + 1)
+    #     plt.imshow(images_list[i][0], cmap='gray')
+    #     plt.title(f"Pred: {predictions_list[i]}\nTrue: {labels_list[i]}")
+    #     plt.axis('off')
+    # plt.suptitle(f"Visualized Predictions for Coeff: {coeff:.2f}")
+    # plt.show()
 
 # Plot Test Loss vs Coefficient
 plt.figure(figsize=(8, 6))
