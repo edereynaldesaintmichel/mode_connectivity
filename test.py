@@ -82,16 +82,15 @@ for coeff in coefficients:
             total_loss += loss.item() * images.size(0)
             total_samples += images.size(0)
             
-            # Collect images and predictions for visualization
-            if num_images_processed < num_images_to_display:
-                _, predictions = torch.max(outputs, dim=1)
-                images_list.extend(images.numpy())
-                predictions_list.extend(predictions.numpy())
-                labels_list.extend(labels.numpy())
-                num_images_processed += len(images)
-                
             if num_images_processed >= num_images_to_display:
                 break
+
+            _, predictions = torch.max(outputs, dim=1)
+            images_list.extend(images.numpy())
+            predictions_list.extend(predictions.numpy())
+            labels_list.extend(labels.numpy())
+            num_images_processed += len(images)
+                
 
     average_loss = total_loss / total_samples
     losses.append(average_loss)

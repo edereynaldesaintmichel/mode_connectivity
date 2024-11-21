@@ -3,22 +3,31 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset, Subset
 import numpy as np
 import torch.optim as optim
 import torch.nn as nn
 from mnist_net import MNISTNet
+import random
 
+batch_size = 10
+samples_size = 60
+train_data = MNIST(root='./data', train=True,
+                  download=True, transform=ToTensor())
+train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
 
-# Load MNIST test dataset
 test_data = MNIST(root='./data', train=False,
                   download=True, transform=ToTensor())
-# It's better to set shuffle=False for consistent evaluation
-test_loader = DataLoader(test_data, batch_size=10, shuffle=False)
-
-# Define the CNN model
-
-# Function to merge two models
+test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
+samples = []
+i = 0
+sample = []
+for images, labels in train_loader:
+    sample.append((images, labels))
+    if i % samples_size == samples_size-1:
+        samples.append(sample)
+        sample = []
+    i+=1
 
 
 def merge_models(model1: MNISTNet, model2: MNISTNet, coeffs: dict):
@@ -33,8 +42,7 @@ def merge_models(model1: MNISTNet, model2: MNISTNet, coeffs: dict):
     # Iterate through all parameters and merge
     for key in state_dict1:
         coeff_key = key.replace('.', '')
-        merged_state_dict[key] = coeffs[coeff_key] * \
-            state_dict1[key] + (1 - coeffs[coeff_key]) * state_dict2[key]
+        merged_state_dict[key] = coeffs[coeff_key] * state_dict1[key] + (1 - coeffs[coeff_key]) * state_dict2[key]
 
     # Load the merged state dict into the new model
     merged_model.load_state_dict(merged_state_dict)
@@ -65,16 +73,11 @@ def get_distance(coeffs1: dict, coeffs2: dict):
     return distance ** 0.5
 
 
-def get_loss(model, num_images_to_process: int = 50):
+def get_loss(model, data_subset):
     total_loss = 0.0
     total_samples = 0
-    images_processed = 0
     with torch.no_grad():
-        for images, labels in test_loader:
-            if images_processed >= num_images_to_process:
-                images_processed = 0
-                break
-            images_processed += 1
+        for images, labels in data_subset:
             outputs = model(images)
             loss = criterion(outputs, labels)
             # Multiply by number of samples in the batch
@@ -85,9 +88,10 @@ def get_loss(model, num_images_to_process: int = 50):
 
 
 def get_merge_loss(model1: MNISTNet, model2: MNISTNet, path: list, distance_penalty: float = 0.1, stdev_penalty: float = 0.2):
-    total_loss = get_loss(model1)
+    subset = samples[random.randint(0, len(samples)-1)]
+    total_loss = get_loss(model1, subset)
     total_distance = 0
-    previous_loss = get_loss(model1)
+    previous_loss = total_loss
     previous_coeffs = {key: 0 for key in path[0]}
     losses = [total_loss]
     distances = torch.zeros(len(path)+1)
@@ -95,7 +99,7 @@ def get_merge_loss(model1: MNISTNet, model2: MNISTNet, path: list, distance_pena
     for coeffs in path:
         merged_model = merge_models(model1, model2, coeffs)
         merged_model.eval()
-        loss = get_loss(merged_model)
+        loss = get_loss(merged_model, subset)
         losses.append(loss)
         distance = get_distance(coeffs1=coeffs, coeffs2=previous_coeffs)
         total_loss += (loss + previous_loss) * distance
@@ -107,7 +111,7 @@ def get_merge_loss(model1: MNISTNet, model2: MNISTNet, path: list, distance_pena
         i += 1
 
     last_coeffs = {key: 1 for key in path[0]}
-    loss = get_loss(model2)
+    loss = get_loss(model2, subset)
     losses.append(loss)
     distance = get_distance(coeffs1=last_coeffs, coeffs2=coeffs)
     total_loss += (loss + previous_loss) * distance
@@ -121,8 +125,7 @@ class MergePath(nn.Module):
     def __init__(self, model1: MNISTNet, model2: MNISTNet, path_length: int):
         super(MergePath, self).__init__()
         self.path_length = path_length
-        self.parameter_keys = list(key.replace('.', '')
-                                   for key in model1.state_dict().keys())
+        self.parameter_keys = list(key.replace('.', '') for key in model1.state_dict().keys())
         self.num_params = len(self.parameter_keys)
 
         # Initialize coefficients for each step and each parameter
@@ -130,18 +133,18 @@ class MergePath(nn.Module):
         for step in range(path_length-2):
             for key in self.parameter_keys:
                 param_name = f'step{step}_{key}'
-                initial_coeff = step / (path_length - 1) + 0 * torch.rand(1)
+                initial_coeff = (step + 1) / (path_length - 1) + 0.3 * torch.rand(1)
                 initial_coeff = torch.clamp(torch.tensor(initial_coeff), 1e-6, 1 - 1e-6)
                 # initial_value = torch.log(initial_coeff / (1 - initial_coeff))
                 self.register_parameter(param_name, nn.Parameter(initial_coeff))
 
     def forward(self):
         coeffs_path = []
-        for step in range(path_length-2):
+        for step in range(self.path_length-2):
             coeffs_step = {}
             for key in self.parameter_keys:
                 param_name = f'step{step}_{key}'
-                coeff = torch.sigmoid(getattr(self, param_name))
+                coeff = getattr(self, param_name)
                 coeffs_step[key] = coeff
             coeffs_path.append(coeffs_step)
         return coeffs_path
@@ -150,9 +153,9 @@ class MergePath(nn.Module):
 path_length = 10  # Number of steps in the path
 merge_path = MergePath(model1, model2, path_length)
 
-optimizer = optim.Adam(merge_path.parameters(), lr=0.2)
+optimizer = optim.Adam(merge_path.parameters(), lr=0.02)
 
-num_epochs = 150  # Adjust as needed
+num_epochs = 100  # Adjust as needed
 
 
 min_theoretical_distance = len(model1.state_dict()) ** 0.5
@@ -173,6 +176,8 @@ torch.save(merge_path.state_dict(), 'path_finder.pth')
 
 
 def evaluate_paths(paths, eval_steps, model1, model2):
+    subset = test_loader
+
     results = {}
     path_coeffs = {}
     
@@ -208,7 +213,7 @@ def evaluate_paths(paths, eval_steps, model1, model2):
             optimal_coeffs = {key: path[index-1][key] + interpolation_coeff * (path[index][key] - path[index-1][key]) for key in path[0]}
 
             optimal_path_model = merge_models(model1=model1, model2=model2, coeffs=optimal_coeffs)
-            optimal_path_losses.append(get_loss(optimal_path_model, 500))
+            optimal_path_losses.append(get_loss(optimal_path_model, subset))
             optimal_path_eval_coeffs.append(optimal_coeffs)
 
         # Store results for this path
@@ -220,7 +225,7 @@ def evaluate_paths(paths, eval_steps, model1, model2):
     path_coeffs['linear'] = linear_path
     for i in range(eval_steps):
         linear_path_model = merge_models(model1=model1, model2=model2, coeffs=linear_path[i])
-        linear_path_losses.append(get_loss(linear_path_model, 500))
+        linear_path_losses.append(get_loss(linear_path_model, subset))
     
     results['linear'] = linear_path_losses
     
@@ -234,6 +239,7 @@ def plot_results(results, path_coeffs, eval_steps):
     for path_name, data in results.items():
         with torch.no_grad():
             path = path_coeffs[path_name]
+            print(path)
             progress_along_path = [get_distance(path[i], zero) / (get_distance(path[i], zero) + get_distance(path[i], one)) for i in range(eval_steps)]
             progress_along_path = [item.item() if torch.is_tensor(item) else item for item in progress_along_path]
             plt.plot(progress_along_path, data, label=f'{path_name} Loss')
