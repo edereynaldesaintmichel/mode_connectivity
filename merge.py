@@ -87,7 +87,7 @@ def get_loss(model, data_subset):
     return total_loss / total_samples
 
 
-def get_merge_loss(model1: MNISTNet, model2: MNISTNet, path: list, distance_penalty: float = 0.1, stdev_penalty: float = 0.2):
+def get_path_loss(model1: MNISTNet, model2: MNISTNet, path: list, distance_penalty: float = 0.1, stdev_penalty: float = 0.2):
     subset = samples[random.randint(0, len(samples)-1)]
     total_loss = get_loss(model1, subset)
     total_distance = 0
@@ -164,7 +164,7 @@ print(f'min_theoretical_distance: {min_theoretical_distance}')
 for epoch in range(num_epochs):
     optimizer.zero_grad()
     coeffs_path = merge_path()
-    loss, losses, distances = get_merge_loss(model1, model2, coeffs_path, distance_penalty=0.01, stdev_penalty=0.5)
+    loss, losses, distances = get_path_loss(model1, model2, coeffs_path, distance_penalty=0.01, stdev_penalty=0.5)
     loss.backward()
     optimizer.step()
 
@@ -258,7 +258,7 @@ paths = {
     # Add more paths here if needed
 }
 
-# tmp, losses, distances = get_merge_loss(model1=model1, model2=model2, path=merge_path())
+# tmp, losses, distances = get_path_loss(model1=model1, model2=model2, path=merge_path())
 # plt.figure(figsize=(8, 6))
 # distances = torch.cat((torch.tensor([0.0]), torch.cumsum(distances.clone().detach(), dim=0)))
 # plt.plot(distances, losses, marker='o')

@@ -10,7 +10,7 @@ import torch.optim as optim
 import random
 
 
-batch_size = 10
+batch_size = 60
 samples_size = 60
 train_data = MNIST(root='./data', train=True,
                   download=True, transform=ToTensor())
@@ -29,9 +29,9 @@ for images, labels in train_loader:
         sample = []
     i+=1
 
-class list(nn.Module):
+class MergePath(nn.Module):
     def __init__(self, diff_model_state_dict: dict, path_length: int):
-        super(list, self).__init__()
+        super(MergePath, self).__init__()
         self.path_length = path_length
         self.parameter_keys = list(key.replace('.', '') for key in diff_model_state_dict.keys())
         self.dict = {key.replace('.', ''): value for key, value in diff_model_state_dict.items()}
@@ -47,7 +47,7 @@ class list(nn.Module):
                     U, initial_value, V = tmp
                 else:
                     initial_value = tmp
-                initial_value = initial_value * (step + 1) / (path_length - 1)
+                initial_value = (step + 1) / (path_length - 1) * initial_value * (1 + 0*random.random())
                 self.register_parameter(param_name, nn.Parameter(initial_value))
 
     def forward(self):
@@ -60,6 +60,8 @@ class list(nn.Module):
                 coeffs_step[key] = coeff
             coeffs_path.append(coeffs_step)
         return coeffs_path
+    
+criterion = nn.CrossEntropyLoss()
 
 def get_divisors(n):
     divisors = []
@@ -130,10 +132,10 @@ def merge_svd_models(state_dict_model_1: dict, diff_model_svd_params: dict, opti
     for name, svd_param in diff_model_svd_params.items():
         if (isinstance(svd_param, tuple)):
             (U, S, V) = svd_param
-            S = optimized_diff_model_params[name]
+            S = optimized_diff_model_params[name.replace('.', '')] #* S
             updated_diff_model_svd[name] = (U, S, V)
         else:
-            updated_diff_model_svd[name] = optimized_diff_model_params[name]
+            updated_diff_model_svd[name] = optimized_diff_model_params[name.replace('.', '')] #* svd_param
     
     optimized_diff_model_state_dict = get_model_state_dict_from_svd(updated_diff_model_svd)
     merged_model_state_dict = add_state_dicts(state_dict1=state_dict_model_1, state_dict2=optimized_diff_model_state_dict)
@@ -158,34 +160,24 @@ def get_loss(model, data_subset):
 def get_distance(coeffs1: dict, coeffs2: dict):
     distance = 0
     for key in coeffs1:
-        distance += sum((coeffs1[key] - coeffs2[key])**2)
+        distance += torch.sum((coeffs1[key] - coeffs2[key])**2)
 
     return distance ** 0.5
 
 
-def get_merge_loss(model1: MNISTNet, diff_model_svd_params: dict, path: list, distance_penalty: float = 0.1, stdev_penalty: float = 0.2):
+def get_path_loss(model1: MNISTNet, diff_model_svd_params: dict, path: list, distance_penalty: float = 0.1, stdev_penalty: float = 0.2):
+    model1_dict = model1.state_dict()
     subset = samples[random.randint(0, len(samples)-1)]
     total_loss = get_loss(model1, subset)
     total_distance = 0
     previous_loss = total_loss
-    previous_coeffs = {key: 0 for key in path[0]}
+    previous_coeffs = {key: torch.zeros(value.size()) for key, value in path[0].items()}
     losses = [total_loss]
     distances = torch.zeros(len(path)+1)
     i = 0
 
-    coeffs = [0 for _ in range(path.path_length)]
-
     for coeffs in path:
-        svd_params = {}
-        for key, param in diff_model_svd_params:
-            if isinstance(param, tuple):
-                U, S, V = param
-                svd_params[key] = U, coeffs[key.replace('.', '')], V
-            else:
-                svd_params[key] = coeffs[key.replace('.', '')]
-
-        
-        merged_model = merge_models(model1, diff_model_svd_params, coeffs)
+        merged_model = merge_svd_models(state_dict_model_1=model1_dict, diff_model_svd_params=diff_model_svd_params, optimized_diff_model_params=coeffs)
         merged_model.eval()
         loss = get_loss(merged_model, subset)
         losses.append(loss)
@@ -198,8 +190,9 @@ def get_merge_loss(model1: MNISTNet, diff_model_svd_params: dict, path: list, di
         previous_loss = loss
         i += 1
 
-    last_coeffs = {key: 1 for key in path[0]}
-    loss = get_loss(diff_model_svd_params, subset)
+    last_coeffs = {key.replace('.', ''): value[1] if isinstance(value, tuple) else value for key, value in diff_model_svd_params.items()}
+    
+    loss = get_loss(model2, subset)
     losses.append(loss)
     distance = get_distance(coeffs1=last_coeffs, coeffs2=coeffs)
     total_loss += (loss + previous_loss) * distance
@@ -211,7 +204,13 @@ def get_merge_loss(model1: MNISTNet, diff_model_svd_params: dict, path: list, di
 # Usage
 state_dict_1 = torch.load('model1.pth', map_location=torch.device('cpu'))
 state_dict_2 = torch.load('model2.pth', map_location=torch.device('cpu'))
+model1 = MNISTNet()
+model1.load_state_dict(state_dict_1)
+model1.eval()
 
+model2 = MNISTNet()
+model2.load_state_dict(state_dict_2)
+model2.eval()
 
 diff_state_dict = substract_state_dicts(state_dict1=state_dict_2, state_dict2=state_dict_1)
 
@@ -224,14 +223,6 @@ total_tunable_params = 0
 
 
 path_length = 10  # Number of steps in the path
-merge_path = list(svd_params, path_length)
-
-
-optimizer = optim.Adam(merge_path.parameters(), lr=0.02)
-
-total_params = sum(p.numel() for p in merge_path.parameters())
-
-num_epochs = 100  # Adjust as needed
 
 for layer, svd_param in svd_params.items():
     if (isinstance(svd_param, tuple)):
@@ -245,3 +236,17 @@ for layer, svd_param in svd_params.items():
 print(f"Total tunable_params: {total_tunable_params}")
 
 
+merge_path = MergePath(svd_params, path_length)
+
+optimizer = optim.Adam(merge_path.parameters(), lr=1e-2)
+
+num_epochs = 300  # Adjust as needed
+
+for epoch in range(num_epochs):
+    optimizer.zero_grad()
+    coeffs_path = merge_path()
+    loss, losses, distances = get_path_loss(model1=model1, diff_model_svd_params=svd_params, path=coeffs_path, distance_penalty=0.001, stdev_penalty=0.5)
+    loss.backward()
+    optimizer.step()
+
+    print(f'Epoch {epoch+1}/{num_epochs}, Loss: {loss.item()}, Distance: {sum(distances)}, Path Loss: {sum(losses)}')
