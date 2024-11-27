@@ -47,7 +47,7 @@ class MergePath(nn.Module):
                     U, initial_value, V = tmp
                 else:
                     initial_value = tmp
-                initial_value = (step + 1) / (path_length - 1) * initial_value * (1 + 0*random.random())
+                initial_value = (step + 1) / (path_length - 1) * initial_value * (torch.ones(initial_value.size()) + 0 * (torch.rand(initial_value.size())-0.5))
                 self.register_parameter(param_name, nn.Parameter(initial_value))
 
     def forward(self):
@@ -150,7 +150,7 @@ def get_loss(model, data_subset):
     with torch.no_grad():
         for images, labels in data_subset:
             outputs = model(images)
-            loss = criterion(outputs, labels)
+            loss = nn.CrossEntropyLoss()(outputs, labels)
             # Multiply by number of samples in the batch
             total_loss += loss.item() * images.size(0)
             total_samples += images.size(0)
@@ -199,7 +199,7 @@ def get_path_loss(model1: MNISTNet, diff_model_svd_params: dict, path: list, dis
     total_distance += distance
     distances[i] = distance
 
-    return sum(loss**2 for loss in losses) + distance_penalty * total_distance + stdev_penalty * torch.std(distances), losses, distances
+    return max(losses) + distance_penalty * total_distance + stdev_penalty * torch.std(distances), losses, distances
 
 # Usage
 state_dict_1 = torch.load('model1.pth', map_location=torch.device('cpu'))
@@ -245,7 +245,7 @@ num_epochs = 300  # Adjust as needed
 for epoch in range(num_epochs):
     optimizer.zero_grad()
     coeffs_path = merge_path()
-    loss, losses, distances = get_path_loss(model1=model1, diff_model_svd_params=svd_params, path=coeffs_path, distance_penalty=0.001, stdev_penalty=0.5)
+    loss, losses, distances = get_path_loss(model1=model1, diff_model_svd_params=svd_params, path=coeffs_path, distance_penalty=0, stdev_penalty=0)
     loss.backward()
     optimizer.step()
 

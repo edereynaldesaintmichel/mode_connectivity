@@ -18,6 +18,8 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Initialize and train the parent model
 model = MNISTNet().to(device)
+model.load_state_dict(torch.load(
+    'model1.pth', map_location=torch.device('cpu')))
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -36,7 +38,13 @@ for epoch in range(1):
         optimizer.zero_grad()
         outputs = model(inputs)
         loss = criterion(outputs, labels)
-        loss.backward()
+        loss.backward(retain_graph=True)
+         # Print gradients for each parameter in the model
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                print(f"Gradient for {name}: {param.grad}")
+            else:
+                print(f"Gradient for {name} is None (likely frozen or unused in the computation).")
         optimizer.step()
 
         running_loss += loss.item()
