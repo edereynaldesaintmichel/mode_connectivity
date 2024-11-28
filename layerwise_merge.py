@@ -130,8 +130,10 @@ class MergePath(nn.Module):
                     # For layers without parameters (e.g., activation functions)
                     data = layer1(data)
             output.append(data)
-    
         return output, self.alphas
+    
+    def backward(self, grad_output):
+        return grad_output
 
 merge_path = MergePath(path_length=10)
 optimizer = optim.Adam(merge_path.parameters(), lr=0.00005)
