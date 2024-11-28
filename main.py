@@ -10,66 +10,54 @@ from mnist_net import MNISTNet
 train_data = MNIST(root='./data', train=True, download=True, transform=ToTensor())
 test_data = MNIST(root='./data', train=False, download=True, transform=ToTensor())
 
-# Set initial seed for reproducibility
-torch.manual_seed(4)
 
 # Device configuration
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Initialize and train the parent model
 model = MNISTNet().to(device)
-model.load_state_dict(torch.load(
-    'model1.pth', map_location=torch.device('cpu')))
+# model.load_state_dict(torch.load(
+#     'model1.pth', map_location=torch.device('cpu')))
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 total_params = sum(p.numel() for p in model.parameters())
 print(f'Total number of parameters: {total_params}')
 
-# Create DataLoader for parent model
-train_loader_parent = DataLoader(train_data, batch_size=32, shuffle=True)
+# # Create DataLoader for parent model
+# train_loader_parent = DataLoader(train_data, batch_size=32, shuffle=True)
 
-for epoch in range(1):
-    running_loss = 0.0
-    for i, data in enumerate(train_loader_parent, 0):
-        inputs, labels = data
-        inputs, labels = inputs.to(device), labels.to(device)
+# for epoch in range(1):
+#     running_loss = 0.0
+#     for i, data in enumerate(train_loader_parent, 0):
+#         inputs, labels = data
+#         inputs, labels = inputs.to(device), labels.to(device)
 
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward(retain_graph=True)
-         # Print gradients for each parameter in the model
-        for name, param in model.named_parameters():
-            if param.grad is not None:
-                print(f"Gradient for {name}: {param.grad}")
-            else:
-                print(f"Gradient for {name} is None (likely frozen or unused in the computation).")
-        optimizer.step()
+#         optimizer.zero_grad()
+#         outputs = model(inputs)
+#         loss = criterion(outputs, labels)
+#         loss.backward()
+#         optimizer.step()
 
-        running_loss += loss.item()
-        if i % 100 == 99:
-            print(f'[{epoch + 1}, {i + 1}] loss: {running_loss / 100:.3f}')
-            running_loss = 0.0
+#         running_loss += loss.item()
+#         if i % 100 == 99:
+#             print(f'[{epoch + 1}, {i + 1}] loss: {running_loss / 100:.3f}')
+#             running_loss = 0.0
 
-        if i % 5 == 4:
-            break
+#         if i % 5 == 4:
+#             break
 # print('Finished Training Parent Model')
 
-# Save the trained parent model
-torch.save(model.state_dict(), 'parent_model.pth')
+# # Save the trained parent model
+# torch.save(model.state_dict(), 'parent_model.pth')
 
 # Initialize model1 and model2
 model1 = MNISTNet().to(device)
 model2 = MNISTNet().to(device)
 
-# Load the parent model weights
-model1.load_state_dict(torch.load('parent_model.pth'))
-model2.load_state_dict(torch.load('parent_model.pth'))
-
-# Define separate seeds for model1 and model2
-seed_model1 = 42
-seed_model2 = 100
+# # Load the parent model weights
+# model1.load_state_dict(torch.load('parent_model.pth'))
+# model2.load_state_dict(torch.load('parent_model.pth'))
 
 total_size = len(train_data)
 split_ratio = 0.5  # For splitting the dataset into two equal parts
