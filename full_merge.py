@@ -156,30 +156,31 @@ def test_model(model):
 initial_losses = test_model(merge_path)
 print(initial_losses)
 
-# for epoch in range(1):
-#     for i, data in enumerate(train_loader, 0):
-#         images, labels = data
-#         outputs, alphas = merge_path(images)
-#         distance_loss = torch.norm(torch.stack([torch.norm((alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}'])) for layer in dict_keys for step in range(merge_path.path_length-1)]))
-#         std_loss = torch.std(torch.norm(torch.tensor([[torch.norm(alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}']) for layer in dict_keys] for step in range(merge_path.path_length-1)]), dim=1))
-#         error_loss = torch.mean(torch.stack([F.cross_entropy(output, labels)**2 for output in outputs]))
-#         loss = 1 * error_loss + distance_penalty * distance_loss + std_penalty * std_loss
-#         print(f"Step {i + 1} (epoch {epoch}), Loss: {loss:.4f}, Distance: {distance_loss:.4f}, STD: {std_loss:.4f}, Error Loss: {error_loss:.4f}")
-#         loss.backward(retain_graph=True)
+for epoch in range(1):
+    for i, data in enumerate(train_loader, 0):
+        images, labels = data
+        outputs, alphas = merge_path(images)
+        distance_loss = torch.norm(torch.stack([torch.norm((alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}'])) for layer in dict_keys for step in range(merge_path.path_length-1)]))
+        std_loss = torch.std(torch.norm(torch.tensor([[torch.norm(alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}']) for layer in dict_keys] for step in range(merge_path.path_length-1)]), dim=1))
+        error_loss = torch.mean(torch.stack([F.cross_entropy(output, labels)**2 for output in outputs]))
+        loss = 1 * error_loss + distance_penalty * distance_loss + std_penalty * std_loss
+        print(f"Step {i + 1} (epoch {epoch}), Loss: {loss:.4f}, Distance: {distance_loss:.4f}, STD: {std_loss:.4f}, Error Loss: {error_loss:.4f}")
+        loss.backward(retain_graph=True)
 
-#         optimizer.step()
+        optimizer.step()
 
-images, labels = next(iter(train_loader))
-for epoch in range(300):   
-    outputs, alphas = merge_path(images)
-    distance_loss = torch.norm(torch.stack([torch.norm((alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}'])) for layer in dict_keys for step in range(merge_path.path_length-1)]))
-    std_loss = torch.std(torch.norm(torch.tensor([[torch.norm(alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}']) for layer in dict_keys] for step in range(merge_path.path_length-1)]), dim=1))
-    error_loss = torch.mean(torch.stack([F.cross_entropy(output, labels)**2 for output in outputs]))
-    loss = 1 * error_loss + distance_penalty * distance_loss + std_penalty * std_loss
-    print(f"(epoch {epoch}), Loss: {loss:.4f}, Distance: {distance_loss:.4f}, STD: {std_loss:.4f}, Error Loss: {error_loss:.4f}")
-    loss.backward()
+## Test: ability to generalize from a single small batch. It does better when there are only a few trainable parameters.
+# images, labels = next(iter(train_loader))
+# for epoch in range(300):   
+#     outputs, alphas = merge_path(images)
+#     distance_loss = torch.norm(torch.stack([torch.norm((alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}'])) for layer in dict_keys for step in range(merge_path.path_length-1)]))
+#     std_loss = torch.std(torch.norm(torch.tensor([[torch.norm(alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}']) for layer in dict_keys] for step in range(merge_path.path_length-1)]), dim=1))
+#     error_loss = torch.mean(torch.stack([F.cross_entropy(output, labels)**2 for output in outputs]))
+#     loss = 1 * error_loss + distance_penalty * distance_loss + std_penalty * std_loss
+#     print(f"(epoch {epoch}), Loss: {loss:.4f}, Distance: {distance_loss:.4f}, STD: {std_loss:.4f}, Error Loss: {error_loss:.4f}")
+#     loss.backward()
 
-    optimizer.step()
+#     optimizer.step()
 
 torch.save(merge_path.state_dict(), 'full_merge.pth')
 
