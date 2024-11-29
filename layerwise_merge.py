@@ -68,22 +68,8 @@ class MergePath(nn.Module):
         assert len(list(model1.children())) == len(list(model2.children())), \
             "Both models must have the same number of layers for layerwise merging."
         
-        # model1 = model1
-        # model2 = model2
         self.path_length = path_length
-        
-        # # Freeze the weights of model1 and model2
-        # for param in model1.parameters():
-        #     param.requires_grad = False
-        # for param in model2.parameters():
-        #     param.requires_grad = False
-        
-        # torch.matmul(torch.diag_embed(torch.full(tmp['conv1.bias'].size()[:-1], 1.0)), tmp['conv1.bias']) - tmp['conv1.bias']
         self.alphas = nn.ParameterDict()
-        # {
-        #     f"{param_name.replace('.', '')}_{step}": nn.Parameter(torch.full((value.size()[-1]), float(step)* (1+(random.random() - 0.5)*0.1) / (path_length - 1))) 
-        #     for param_name, value in model1.state_dict() for step in range(path_length)
-        # })
         random_factor = 0
         for step in range(path_length):
             for param_name, value in model1.state_dict().items():
@@ -94,6 +80,10 @@ class MergePath(nn.Module):
                 
                 self.alphas[f"{param_name.replace('.', '')}_{step}"] = default_value
         
+        # Register gradient hooks on parameters
+        for name, param in self.named_parameters():
+            param.register_hook(lambda grad, param_name=name: 
+                self._gradient_hook(grad, param_name))
         
     def forward(self, x):
         """
@@ -132,14 +122,33 @@ class MergePath(nn.Module):
             output.append(data)
         return output, self.alphas
     
-    def backward(self, grad_output):
-        return grad_output
+    def _gradient_hook(self, grad, param_name: str):
+        
+        net_param_name, path_step_string = param_name.split('.')[1].split('_')
+        path_step = int(path_step_string)
+        if path_step == self.path_length-1 or path_step == 0:
+            return torch.zeros(grad.size())
+        output_grad = grad.clone()
+
+        previous_step_param = self.alphas[f'{net_param_name}_{int(path_step)-1}']
+        next_step_param = self.alphas[f'{net_param_name}_{int(path_step)+1}']
+        forbidden_direction = next_step_param - previous_step_param
+        
+        projection = (torch.sum(forbidden_direction * grad) / torch.sum(forbidden_direction**2)) * forbidden_direction
+
+        output_grad -= projection * 0.9 #keep a bit of gradient in that direction anyway  
+
+        # print(f"Processing gradients for parameter: {param_name}")
+        # Modify grad here if needed
+        return output_grad
 
 merge_path = MergePath(path_length=10)
-optimizer = optim.Adam(merge_path.parameters(), lr=0.00005)
-distance_penalty = 0.001
-std_penalty = 10
-extremity_penalty = 10
+
+merge_path.register_full_backward_hook
+optimizer = optim.Adam(merge_path.parameters(), lr=0.002)
+distance_penalty = 0.01
+std_penalty = 0.1
+extremity_penalty = 0.1
 
 dict_keys = [x for x in [key.replace('.', '') for key in model1.state_dict().keys()]]
 
@@ -158,14 +167,14 @@ def test_model(model):
 initial_losses = test_model(merge_path)
 print(initial_losses)
 
-for epoch in range(2):
+for epoch in range(1):
     for i, data in enumerate(train_loader, 0):
         images, labels = data
         outputs, alphas = merge_path(images)
         distance_loss = torch.norm(torch.stack([torch.norm((alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}'])) for layer in dict_keys for step in range(merge_path.path_length-1)]))
         std_loss = torch.std(torch.norm(torch.tensor([[torch.norm(alphas[f'{layer}_{step}'] - alphas[f'{layer}_{step+1}']) for layer in dict_keys] for step in range(merge_path.path_length-1)]), dim=1))
         extremity_loss = torch.norm(torch.stack([torch.norm(alphas[f'{layer}_{0}']) for layer in dict_keys])) + torch.norm(torch.stack([torch.norm(alphas[f'{layer}_{merge_path.path_length-1}'] - 1) for layer in dict_keys]))
-        error_loss = torch.mean(torch.stack([F.cross_entropy(output, labels) for output in outputs]))
+        error_loss = torch.mean(torch.stack([F.cross_entropy(output, labels)**2 for output in outputs]))
         loss = 1 * error_loss + distance_penalty * distance_loss + std_penalty * std_loss + extremity_penalty * extremity_loss
         print(f"Step {i + 1} (epoch {epoch}), Loss: {loss:.4f}, Distance: {distance_loss:.4f}, STD: {std_loss:.4f}, ExLoss: {extremity_loss:.4f}, Error Loss: {error_loss:.4f}")
         loss.backward(retain_graph=True)
@@ -177,9 +186,6 @@ torch.save(merge_path.state_dict(), 'layerwise_merge_path.pth')
 merge_path.eval()
 
 after_training_losses = test_model(merge_path)
-
-# I'd like to plot after_training_losses and initial_losses vs range(10), on the same graph
-
 
 x_values = range(10)
 
